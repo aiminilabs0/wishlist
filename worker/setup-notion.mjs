@@ -38,16 +38,6 @@ const res = await fetch("https://api.notion.com/v1/databases", {
     properties: {
       Name: { title: {} },
       URL: { url: {} },
-      Price: { number: { format: "dollar" } },
-      Priority: {
-        select: {
-          options: [
-            { name: "High", color: "red" },
-            { name: "Medium", color: "yellow" },
-            { name: "Low", color: "blue" },
-          ],
-        },
-      },
       Notes: { rich_text: {} },
       Status: {
         select: {

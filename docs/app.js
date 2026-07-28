@@ -10,9 +10,7 @@ const els = {
   form: document.getElementById("add-form"),
   unlock: document.getElementById("unlock-btn"),
   name: document.getElementById("f-name"),
-  price: document.getElementById("f-price"),
   url: document.getElementById("f-url"),
-  priority: document.getElementById("f-priority"),
   notes: document.getElementById("f-notes"),
 };
 
@@ -79,13 +77,6 @@ function renderCard(item) {
     name.rel = "noopener noreferrer";
   }
   titleRow.appendChild(name);
-
-  if (item.price != null) {
-    const price = document.createElement("span");
-    price.className = "price";
-    price.textContent = formatPrice(item.price);
-    titleRow.appendChild(price);
-  }
   body.appendChild(titleRow);
 
   if (item.notes) {
@@ -97,7 +88,6 @@ function renderCard(item) {
 
   const meta = document.createElement("div");
   meta.className = "meta";
-  if (item.priority) meta.appendChild(badge(item.priority, "pri-" + item.priority));
   if (item.status && item.status !== "Wanted")
     meta.appendChild(badge(item.status, "status-" + item.status));
   if (meta.children.length) body.appendChild(meta);
@@ -141,9 +131,7 @@ async function onAdd(e) {
   e.preventDefault();
   const item = {
     name: els.name.value.trim(),
-    price: els.price.value,
     url: els.url.value.trim(),
-    priority: els.priority.value,
     notes: els.notes.value.trim(),
   };
   if (!item.name) return;
@@ -181,17 +169,6 @@ async function onRemove(item, btn) {
   } catch (err) {
     btn.disabled = false;
     setStatus("Could not remove: " + err.message, true);
-  }
-}
-
-function formatPrice(n) {
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency: "USD",
-    }).format(n);
-  } catch {
-    return "$" + n;
   }
 }
 

@@ -154,10 +154,6 @@ button.ghost:hover { color: var(--text); }
   color: var(--text);
 }
 .card .name:hover { text-decoration: underline; }
-.card .price {
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
 .card .notes {
   color: var(--muted);
   font-size: 14px;
@@ -178,9 +174,6 @@ button.ghost:hover { color: var(--text); }
   border: 1px solid var(--border);
   color: var(--muted);
 }
-.badge.pri-High { color: var(--high); border-color: var(--high); }
-.badge.pri-Medium { color: var(--medium); border-color: var(--medium); }
-.badge.pri-Low { color: var(--low); border-color: var(--low); }
 .badge.status-Purchased { color: #5bd18a; border-color: #5bd18a; }
 
 .remove-btn {
