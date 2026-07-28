@@ -142,6 +142,24 @@ button.ghost:hover { color: var(--text); }
   gap: 14px;
 }
 .card .body { flex: 1; min-width: 0; }
+.thumb-wrap {
+  flex-shrink: 0;
+  display: block;
+  line-height: 0;
+}
+.thumb {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+.card .price {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .card .title-row {
   display: flex;
   align-items: baseline;

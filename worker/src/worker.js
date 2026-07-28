@@ -27,6 +27,8 @@ const PROP = {
   name: "Name",
   url: "URL",
   notes: "Notes",
+  image: "Image",
+  price: "Price",
 };
 
 export default {
@@ -88,6 +90,17 @@ async function createItem(request, env) {
   if (body.url) properties[PROP.url] = { url: body.url };
   if (body.notes) properties[PROP.notes] = { rich_text: [{ text: { content: body.notes } }] };
 
+  // Best-effort: pull an image + price out of the product page's metadata.
+  if (body.url) {
+    const meta = await fetchMeta(body.url);
+    if (meta.image) {
+      properties[PROP.image] = {
+        files: [{ type: "external", name: "preview", external: { url: meta.image } }],
+      };
+    }
+    if (meta.price != null) properties[PROP.price] = { number: meta.price };
+  }
+
   const res = await notion(env, "/pages", {
     method: "POST",
     body: JSON.stringify({
@@ -120,6 +133,8 @@ function pageToItem(page) {
     name: readTitle(p[PROP.name]),
     url: p[PROP.url]?.url || "",
     notes: readRichText(p[PROP.notes]),
+    image: readFileUrl(p[PROP.image]),
+    price: p[PROP.price]?.number ?? null,
     createdTime: page.created_time,
   };
 }
@@ -129,6 +144,123 @@ function readTitle(prop) {
 }
 function readRichText(prop) {
   return (prop?.rich_text || []).map((t) => t.plain_text).join("");
+}
+function readFileUrl(prop) {
+  const f = (prop?.files || [])[0];
+  return f?.external?.url || f?.file?.url || "";
+}
+
+/**
+ * Best-effort scrape of a product page for an image + price.
+ * Reads Open Graph / Twitter meta tags, itemprop, and JSON-LD.
+ * Returns { image: string, price: number|null } — empty/null if not found.
+ */
+async function fetchMeta(url) {
+  const out = { image: "", price: null };
+  let html;
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (compatible; WishlistBot/1.0; +https://workers.dev)",
+        Accept: "text/html,application/xhtml+xml",
+      },
+      redirect: "follow",
+      cf: { cacheTtl: 300 },
+    });
+    if (!res.ok) return out;
+    html = await res.text();
+  } catch {
+    return out;
+  }
+
+  // Image: prefer Open Graph, then Twitter.
+  const image = metaContent(html, ["og:image:secure_url", "og:image", "twitter:image", "twitter:image:src"]);
+  if (image) {
+    try {
+      out.image = new URL(image, url).href; // resolve relative URLs
+    } catch {
+      out.image = image;
+    }
+  }
+
+  // Price: meta tags, then itemprop, then JSON-LD.
+  const priceRaw =
+    metaContent(html, ["product:price:amount", "og:price:amount"]) ||
+    itempropPrice(html) ||
+    jsonLdPrice(html);
+  const price = toPrice(priceRaw);
+  if (price != null) out.price = price;
+
+  return out;
+}
+
+function metaContent(html, names) {
+  for (const name of names) {
+    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // Either attribute order: property/name before content, or after.
+    const re1 = new RegExp(
+      `<meta[^>]+(?:property|name)=["']${esc}["'][^>]*content=["']([^"']+)["']`,
+      "i"
+    );
+    const re2 = new RegExp(
+      `<meta[^>]+content=["']([^"']+)["'][^>]*(?:property|name)=["']${esc}["']`,
+      "i"
+    );
+    const m = html.match(re1) || html.match(re2);
+    if (m && m[1]) return m[1].trim();
+  }
+  return "";
+}
+
+function itempropPrice(html) {
+  const m =
+    html.match(/itemprop=["']price["'][^>]*content=["']([^"']+)["']/i) ||
+    html.match(/content=["']([^"']+)["'][^>]*itemprop=["']price["']/i);
+  return m ? m[1] : "";
+}
+
+function jsonLdPrice(html) {
+  const blocks = html.matchAll(
+    /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
+  );
+  for (const b of blocks) {
+    let data;
+    try {
+      data = JSON.parse(b[1].trim());
+    } catch {
+      continue;
+    }
+    const found = findKey(data, "price");
+    if (found != null) return found;
+  }
+  return "";
+}
+
+// Recursively find the first value for `key` in a nested object/array.
+function findKey(node, key, depth = 0) {
+  if (node == null || depth > 6) return null;
+  if (Array.isArray(node)) {
+    for (const v of node) {
+      const r = findKey(v, key, depth + 1);
+      if (r != null) return r;
+    }
+    return null;
+  }
+  if (typeof node === "object") {
+    if (node[key] != null && typeof node[key] !== "object") return node[key];
+    for (const k of Object.keys(node)) {
+      const r = findKey(node[k], key, depth + 1);
+      if (r != null) return r;
+    }
+  }
+  return null;
+}
+
+function toPrice(raw) {
+  if (raw == null || raw === "") return null;
+  const n = Number(String(raw).replace(/[^0-9.]/g, ""));
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 function notion(env, path, init = {}) {

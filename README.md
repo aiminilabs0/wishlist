@@ -48,7 +48,9 @@ Takes ~15 minutes. You need free accounts at [notion.so](https://notion.so) and
 
    It prints a **Database ID** — save it (`NOTION_DATABASE_ID`).
 
-The database has these columns: **Name, URL, Notes**.
+The database has these columns: **Name, URL, Notes, Image** (files/media),
+**Price** (number). Image and Price are filled in automatically from the
+product page when you add an item by URL.
 You can edit items directly in Notion any time and they'll appear on the page.
 
 > Already have a database? Skip step 4 and just make sure its column names match

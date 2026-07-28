@@ -62,6 +62,25 @@ function renderCard(item) {
   const li = document.createElement("li");
   li.className = "card";
 
+  if (item.image) {
+    const link = item.url ? document.createElement("a") : document.createElement("div");
+    link.className = "thumb-wrap";
+    if (item.url) {
+      link.href = item.url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+    }
+    const img = document.createElement("img");
+    img.className = "thumb";
+    img.src = item.image;
+    img.alt = item.name || "";
+    img.loading = "lazy";
+    img.referrerPolicy = "no-referrer";
+    img.onerror = () => link.remove(); // hide broken/hotlink-blocked images
+    link.appendChild(img);
+    li.appendChild(link);
+  }
+
   const body = document.createElement("div");
   body.className = "body";
 
@@ -77,6 +96,13 @@ function renderCard(item) {
     name.rel = "noopener noreferrer";
   }
   titleRow.appendChild(name);
+
+  if (item.price != null) {
+    const price = document.createElement("span");
+    price.className = "price";
+    price.textContent = formatPrice(item.price);
+    titleRow.appendChild(price);
+  }
   body.appendChild(titleRow);
 
   if (item.notes) {
@@ -159,6 +185,17 @@ async function onRemove(item, btn) {
   } catch (err) {
     btn.disabled = false;
     setStatus("Could not remove: " + err.message, true);
+  }
+}
+
+function formatPrice(n) {
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: "USD",
+    }).format(n);
+  } catch {
+    return "$" + n;
   }
 }
 

@@ -39,6 +39,8 @@ const res = await fetch("https://api.notion.com/v1/databases", {
       Name: { title: {} },
       URL: { url: {} },
       Notes: { rich_text: {} },
+      Image: { files: {} },
+      Price: { number: { format: "dollar" } },
     },
   }),
 });
