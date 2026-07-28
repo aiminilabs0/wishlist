@@ -160,22 +160,6 @@ button.ghost:hover { color: var(--text); }
   margin: 6px 0 0;
   white-space: pre-wrap;
 }
-.card .meta {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
-  flex-wrap: wrap;
-}
-.badge {
-  font-size: 12px;
-  font-weight: 600;
-  padding: 3px 9px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  color: var(--muted);
-}
-.badge.status-Purchased { color: #5bd18a; border-color: #5bd18a; }
-
 .remove-btn {
   background: transparent;
   color: var(--muted);

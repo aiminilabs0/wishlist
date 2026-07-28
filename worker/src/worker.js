@@ -27,7 +27,6 @@ const PROP = {
   name: "Name",
   url: "URL",
   notes: "Notes",
-  status: "Status",
 };
 
 export default {
@@ -88,8 +87,6 @@ async function createItem(request, env) {
   };
   if (body.url) properties[PROP.url] = { url: body.url };
   if (body.notes) properties[PROP.notes] = { rich_text: [{ text: { content: body.notes } }] };
-  // New items start as "Wanted".
-  properties[PROP.status] = { select: { name: "Wanted" } };
 
   const res = await notion(env, "/pages", {
     method: "POST",
@@ -123,7 +120,6 @@ function pageToItem(page) {
     name: readTitle(p[PROP.name]),
     url: p[PROP.url]?.url || "",
     notes: readRichText(p[PROP.notes]),
-    status: p[PROP.status]?.select?.name || "",
     createdTime: page.created_time,
   };
 }

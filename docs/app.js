@@ -86,12 +86,6 @@ function renderCard(item) {
     body.appendChild(notes);
   }
 
-  const meta = document.createElement("div");
-  meta.className = "meta";
-  if (item.status && item.status !== "Wanted")
-    meta.appendChild(badge(item.status, "status-" + item.status));
-  if (meta.children.length) body.appendChild(meta);
-
   li.appendChild(body);
 
   const remove = document.createElement("button");
@@ -102,13 +96,6 @@ function renderCard(item) {
   li.appendChild(remove);
 
   return li;
-}
-
-function badge(text, cls) {
-  const b = document.createElement("span");
-  b.className = "badge " + cls;
-  b.textContent = text;
-  return b;
 }
 
 function onUnlock() {

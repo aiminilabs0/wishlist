@@ -48,7 +48,7 @@ Takes ~15 minutes. You need free accounts at [notion.so](https://notion.so) and
 
    It prints a **Database ID** — save it (`NOTION_DATABASE_ID`).
 
-The database has these columns: **Name, URL, Notes, Status**.
+The database has these columns: **Name, URL, Notes**.
 You can edit items directly in Notion any time and they'll appear on the page.
 
 > Already have a database? Skip step 4 and just make sure its column names match
@@ -117,8 +117,8 @@ After a minute your page is live at
   your browser session, never in the repo.
 - **Remove** archives the row in Notion (moves it to Notion's trash), so it's
   recoverable.
-- Edits you make in Notion directly (price, notes, mark Purchased) show up on the
-  page on next load.
+- Edits you make in Notion directly (rename, change link, edit notes) show up on
+  the page on next load.
 
 ---
 
@@ -154,3 +154,4 @@ cd worker && npx wrangler dev
 - CORS is open (`*`) so the page can call the Worker; writes are still
   protected by the key. To lock reads to your domain too, restrict the origin in
   `corsHeaders()` in `worker/src/worker.js`.
+../README.md
