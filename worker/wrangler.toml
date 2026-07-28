@@ -1,0 +1,14 @@
+# Cloudflare Worker config for the Wishlist API.
+# Deploy with:  cd worker && npx wrangler deploy
+#
+# Set secrets (interactive prompts) BEFORE deploying:
+#   npx wrangler secret put NOTION_TOKEN
+#   npx wrangler secret put NOTION_DATABASE_ID
+#   npx wrangler secret put WISHLIST_KEY
+#
+# (NOTION_DATABASE_ID can also be a plain [vars] entry if you don't mind it
+#  being visible — it's not sensitive on its own.)
+
+name = "wishlist-api"
+main = "src/worker.js"
+compatibility_date = "2024-11-01"
