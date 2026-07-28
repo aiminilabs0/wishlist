@@ -42,6 +42,10 @@ export default {
     }
 
     try {
+      if (pathname === "/auth" && request.method === "GET") {
+        requireKey(request, env);
+        return json({ ok: true });
+      }
       if (pathname === "/items" && request.method === "GET") {
         return await listItems(env);
       }

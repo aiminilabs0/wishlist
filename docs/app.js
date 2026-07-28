@@ -27,10 +27,20 @@ function init() {
     setStatus("Set your Worker URL in config.js to load the wishlist.", true);
     return;
   }
-  if (editKey) enableEditing();
+  // Validate any cached key before trusting it; drop it if it's stale/wrong.
+  if (editKey) verifyKey(editKey).then((ok) => (ok ? enableEditing() : clearEditKey()));
   els.unlock.addEventListener("click", onUnlock);
   els.form.addEventListener("submit", onAdd);
   loadItems();
+}
+
+async function verifyKey(key) {
+  try {
+    const res = await fetch(`${API}/auth`, { headers: { "x-wishlist-key": key } });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 async function loadItems() {
@@ -124,11 +134,18 @@ function renderCard(item) {
   return li;
 }
 
-function onUnlock() {
-  const key = prompt("Enter your editing key:");
+async function onUnlock() {
+  const key = prompt("Enter your editing key:", editKey || "");
   if (!key) return;
+  setStatus("Checking key…");
+  const ok = await verifyKey(key);
+  if (!ok) {
+    setStatus("Wrong key — try again.", true);
+    return;
+  }
   editKey = key;
   sessionStorage.setItem("wishlist_key", key);
+  setStatus("");
   enableEditing();
   // Re-render so remove buttons appear.
   loadItems();
@@ -136,11 +153,19 @@ function onUnlock() {
 
 function enableEditing() {
   els.form.hidden = false;
-  els.unlock.textContent = "🔓 Editing on";
-  els.unlock.disabled = true;
+  els.unlock.textContent = "🔓 Editing on (change key)";
+  // Keep the button enabled so a wrong key can always be re-entered.
+  els.unlock.disabled = false;
   // Bring the add-item form (top of the page) into view and focus it.
   els.form.scrollIntoView({ behavior: "smooth", block: "start" });
   els.name.focus();
+}
+
+// Called when the Worker rejects a write with 401 — the cached key is wrong.
+function clearEditKey() {
+  editKey = "";
+  sessionStorage.removeItem("wishlist_key");
+  els.unlock.textContent = "✏️ Edit";
 }
 
 async function onAdd(e) {
@@ -160,6 +185,10 @@ async function onAdd(e) {
       body: JSON.stringify(item),
     });
     const data = await res.json();
+    if (res.status === 401) {
+      clearEditKey();
+      throw new Error("Wrong key — click ✏️ Edit and enter it again");
+    }
     if (!res.ok) throw new Error(data.error || "Add failed");
     els.form.reset();
     setStatus("Added ✓");
@@ -179,6 +208,10 @@ async function onRemove(item, btn) {
       headers: { "x-wishlist-key": editKey },
     });
     const data = await res.json();
+    if (res.status === 401) {
+      clearEditKey();
+      throw new Error("Wrong key — click ✏️ Edit and enter it again");
+    }
     if (!res.ok) throw new Error(data.error || "Remove failed");
     setStatus("Removed ✓");
     loadItems();
