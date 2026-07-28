@@ -112,6 +112,9 @@ function enableEditing() {
   els.form.hidden = false;
   els.unlock.textContent = "🔓 Editing on";
   els.unlock.disabled = true;
+  // Bring the add-item form (top of the page) into view and focus it.
+  els.form.scrollIntoView({ behavior: "smooth", block: "start" });
+  els.name.focus();
 }
 
 async function onAdd(e) {
