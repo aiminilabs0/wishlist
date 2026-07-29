@@ -11,6 +11,8 @@ const els = {
   unlock: document.getElementById("unlock-btn"),
   name: document.getElementById("f-name"),
   url: document.getElementById("f-url"),
+  price: document.getElementById("f-price"),
+  image: document.getElementById("f-image"),
   notes: document.getElementById("f-notes"),
 };
 
@@ -173,6 +175,8 @@ async function onAdd(e) {
   const item = {
     name: els.name.value.trim(),
     url: els.url.value.trim(),
+    price: els.price.value,
+    image: els.image.value.trim(),
     notes: els.notes.value.trim(),
   };
   if (!item.name) return;

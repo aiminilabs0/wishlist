@@ -46,6 +46,12 @@ export default {
         requireKey(request, env);
         return json({ ok: true });
       }
+      if (pathname === "/preview" && request.method === "GET") {
+        requireKey(request, env);
+        const target = url.searchParams.get("url");
+        if (!target) throw httpError("url query param required", 400);
+        return json(await fetchMeta(target));
+      }
       if (pathname === "/items" && request.method === "GET") {
         return await listItems(env);
       }
@@ -88,23 +94,41 @@ async function createItem(request, env) {
   const name = (body.name || "").trim();
   if (!name) throw httpError("Name is required", 400);
 
-  const properties = {
+  // Core properties every database is guaranteed to have.
+  const core = {
     [PROP.name]: { title: [{ text: { content: name } }] },
   };
-  if (body.url) properties[PROP.url] = { url: body.url };
-  if (body.notes) properties[PROP.notes] = { rich_text: [{ text: { content: body.notes } }] };
+  if (body.url) core[PROP.url] = { url: body.url };
+  if (body.notes) core[PROP.notes] = { rich_text: [{ text: { content: body.notes } }] };
 
-  // Best-effort: pull an image + price out of the product page's metadata.
-  if (body.url) {
-    const meta = await fetchMeta(body.url);
-    if (meta.image) {
-      properties[PROP.image] = {
-        files: [{ type: "external", name: "preview", external: { url: meta.image } }],
-      };
-    }
-    if (meta.price != null) properties[PROP.price] = { number: meta.price };
+  // Scrape the URL, but let any manually-provided image/price take precedence.
+  let scraped = { image: "", price: null };
+  if (body.url) scraped = await fetchMeta(body.url);
+
+  const image = (body.image || "").trim() || scraped.image;
+  const manualPrice = toPrice(body.price);
+  const price = manualPrice != null ? manualPrice : scraped.price;
+
+  // Optional properties (need Image/Price columns to exist).
+  const extra = {};
+  if (image) {
+    extra[PROP.image] = {
+      files: [{ type: "external", name: "preview", external: { url: image } }],
+    };
   }
+  if (price != null) extra[PROP.price] = { number: price };
 
+  // Try with the scraped fields; if the DB lacks those columns, retry without.
+  let { res, data } = await createPage(env, { ...core, ...extra });
+  if (!res.ok && Object.keys(extra).length && isMissingPropertyError(data)) {
+    ({ res, data } = await createPage(env, core));
+  }
+  if (!res.ok) throw httpError(data.message || "Notion create failed", res.status);
+
+  return json({ item: pageToItem(data) }, 201);
+}
+
+async function createPage(env, properties) {
   const res = await notion(env, "/pages", {
     method: "POST",
     body: JSON.stringify({
@@ -113,9 +137,12 @@ async function createItem(request, env) {
     }),
   });
   const data = await res.json();
-  if (!res.ok) throw httpError(data.message || "Notion create failed", res.status);
+  return { res, data };
+}
 
-  return json({ item: pageToItem(data) }, 201);
+// Notion returns a 400 like "X is not a property that exists" if a column is missing.
+function isMissingPropertyError(data) {
+  return /is not a property that exists/i.test(data?.message || "");
 }
 
 async function archiveItem(pageId, env) {
@@ -178,8 +205,12 @@ async function fetchMeta(url) {
     return out;
   }
 
-  // Image: prefer Open Graph, then Twitter.
-  const image = metaContent(html, ["og:image:secure_url", "og:image", "twitter:image", "twitter:image:src"]);
+  const ld = parseJsonLd(html);
+
+  // Image: prefer the actual product image from JSON-LD, then Open Graph/Twitter.
+  const image =
+    pickImage(findInLd(ld, "image")) ||
+    metaContent(html, ["og:image:secure_url", "og:image", "twitter:image", "twitter:image:src"]);
   if (image) {
     try {
       out.image = new URL(image, url).href; // resolve relative URLs
@@ -188,11 +219,11 @@ async function fetchMeta(url) {
     }
   }
 
-  // Price: meta tags, then itemprop, then JSON-LD.
+  // Price: meta tags, then JSON-LD offers, then itemprop.
   const priceRaw =
     metaContent(html, ["product:price:amount", "og:price:amount"]) ||
-    itempropPrice(html) ||
-    jsonLdPrice(html);
+    findInLd(ld, "price") ||
+    itempropPrice(html);
   const price = toPrice(priceRaw);
   if (price != null) out.price = price;
 
@@ -224,41 +255,55 @@ function itempropPrice(html) {
   return m ? m[1] : "";
 }
 
-function jsonLdPrice(html) {
+function parseJsonLd(html) {
+  const out = [];
   const blocks = html.matchAll(
     /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
   );
   for (const b of blocks) {
-    let data;
     try {
-      data = JSON.parse(b[1].trim());
+      out.push(JSON.parse(b[1].trim()));
     } catch {
-      continue;
+      // ignore malformed blocks
     }
-    const found = findKey(data, "price");
-    if (found != null) return found;
   }
-  return "";
+  return out;
 }
 
-// Recursively find the first value for `key` in a nested object/array.
-function findKey(node, key, depth = 0) {
-  if (node == null || depth > 6) return null;
+// Find the first value for `key` anywhere in the parsed JSON-LD (raw value).
+function findInLd(nodes, key) {
+  for (const n of nodes) {
+    const r = findRaw(n, key, 0);
+    if (r != null) return r;
+  }
+  return null;
+}
+function findRaw(node, key, depth) {
+  if (node == null || depth > 8) return null;
   if (Array.isArray(node)) {
     for (const v of node) {
-      const r = findKey(v, key, depth + 1);
+      const r = findRaw(v, key, depth + 1);
       if (r != null) return r;
     }
     return null;
   }
   if (typeof node === "object") {
-    if (node[key] != null && typeof node[key] !== "object") return node[key];
+    if (node[key] != null) return node[key];
     for (const k of Object.keys(node)) {
-      const r = findKey(node[k], key, depth + 1);
+      const r = findRaw(node[k], key, depth + 1);
       if (r != null) return r;
     }
   }
   return null;
+}
+
+// Normalize a JSON-LD image value (string | array | {url}) to a URL string.
+function pickImage(val) {
+  if (!val) return "";
+  if (typeof val === "string") return val;
+  if (Array.isArray(val)) return pickImage(val[0]);
+  if (typeof val === "object") return val.url || val.contentUrl || "";
+  return "";
 }
 
 function toPrice(raw) {
