@@ -206,11 +206,14 @@ async function fetchMeta(url) {
   }
 
   const ld = parseJsonLd(html);
+  const product = findNodeByType(ld, "Product");
 
-  // Image: prefer the actual product image from JSON-LD, then Open Graph/Twitter.
+  // Image: the Product's own image (JSON-LD), then Open Graph, then Amazon markup.
   const image =
-    pickImage(findInLd(ld, "image")) ||
-    metaContent(html, ["og:image:secure_url", "og:image", "twitter:image", "twitter:image:src"]);
+    pickImage(product?.image) ||
+    metaContent(html, ["og:image:secure_url", "og:image", "twitter:image", "twitter:image:src"]) ||
+    amazonImage(html) ||
+    pickImage(findInLd(ld, "image"));
   if (image) {
     try {
       out.image = new URL(image, url).href; // resolve relative URLs
@@ -219,15 +222,71 @@ async function fetchMeta(url) {
     }
   }
 
-  // Price: meta tags, then JSON-LD offers, then itemprop.
+  // Price: meta tags, then Product offers (JSON-LD), then itemprop, then Amazon markup.
   const priceRaw =
     metaContent(html, ["product:price:amount", "og:price:amount"]) ||
+    (product ? findRaw(product.offers ?? product, "price", 0) : null) ||
     findInLd(ld, "price") ||
-    itempropPrice(html);
+    itempropPrice(html) ||
+    amazonPrice(html);
   const price = toPrice(priceRaw);
   if (price != null) out.price = price;
 
   return out;
+}
+
+// Amazon puts the main product image in data-a-dynamic-image (a JSON map of url->[w,h]).
+function amazonImage(html) {
+  const m =
+    html.match(/id=["']landingImage["'][^>]*data-a-dynamic-image=["']([^"']+)["']/i) ||
+    html.match(/data-a-dynamic-image=["'](\{&quot;[^"']+)["']/i);
+  if (m) {
+    try {
+      const obj = JSON.parse(m[1].replace(/&quot;/g, '"'));
+      const urls = Object.keys(obj);
+      if (urls.length) return urls[0];
+    } catch {
+      // fall through
+    }
+  }
+  const s = html.match(/id=["']landingImage["'][^>]*\bsrc=["']([^"']+)["']/i);
+  return s ? s[1] : "";
+}
+
+// Amazon renders the price inside <span class="a-offscreen">$21.99</span>.
+function amazonPrice(html) {
+  const m = html.match(/class=["']a-offscreen["']>\s*([^<]+)</i);
+  if (m) return m[1];
+  const whole = html.match(/class=["']a-price-whole["']>\s*([0-9,]+)/i);
+  const frac = html.match(/class=["']a-price-fraction["']>\s*([0-9]+)/i);
+  if (whole) return `${whole[1]}.${frac ? frac[1] : "00"}`;
+  return "";
+}
+
+// Find the first JSON-LD node whose @type matches (handles arrays and @graph).
+function findNodeByType(nodes, type) {
+  for (const n of nodes) {
+    const r = searchType(n, type, 0);
+    if (r) return r;
+  }
+  return null;
+}
+function searchType(node, type, depth) {
+  if (node == null || depth > 8 || typeof node !== "object") return null;
+  if (Array.isArray(node)) {
+    for (const v of node) {
+      const r = searchType(v, type, depth + 1);
+      if (r) return r;
+    }
+    return null;
+  }
+  const t = node["@type"];
+  if (t === type || (Array.isArray(t) && t.includes(type))) return node;
+  for (const k of Object.keys(node)) {
+    const r = searchType(node[k], type, depth + 1);
+    if (r) return r;
+  }
+  return null;
 }
 
 function metaContent(html, names) {
