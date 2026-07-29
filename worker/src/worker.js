@@ -193,8 +193,15 @@ async function fetchMeta(url) {
     const res = await fetch(url, {
       headers: {
         "User-Agent":
-          "Mozilla/5.0 (compatible; WishlistBot/1.0; +https://workers.dev)",
-        Accept: "text/html,application/xhtml+xml",
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
       },
       redirect: "follow",
       cf: { cacheTtl: 300 },
@@ -208,12 +215,15 @@ async function fetchMeta(url) {
   const ld = parseJsonLd(html);
   const product = findNodeByType(ld, "Product");
 
-  // Image: the Product's own image (JSON-LD), then Open Graph, then Amazon markup.
-  const image =
-    pickImage(product?.image) ||
-    metaContent(html, ["og:image:secure_url", "og:image", "twitter:image", "twitter:image:src"]) ||
-    amazonImage(html) ||
-    pickImage(findInLd(ld, "image"));
+  // Image: Product image (JSON-LD) → Open Graph → Amazon markup → any JSON-LD image.
+  // Skip Amazon placeholder/logo images that appear on bot-blocked pages.
+  const candidates = [
+    pickImage(product?.image),
+    metaContent(html, ["og:image:secure_url", "og:image", "twitter:image", "twitter:image:src"]),
+    amazonImage(html),
+    pickImage(findInLd(ld, "image")),
+  ];
+  const image = candidates.find((c) => c && !isJunkImage(c)) || "";
   if (image) {
     try {
       out.image = new URL(image, url).href; // resolve relative URLs
@@ -233,6 +243,12 @@ async function fetchMeta(url) {
   if (price != null) out.price = price;
 
   return out;
+}
+
+// Reject Amazon site chrome / placeholder images. Real product photos live under
+// /images/I/; logos, share icons, and sprites live under /images/G/ etc.
+function isJunkImage(u) {
+  return /share-icons|previewdoh|\/images\/G\/|sprite|transparent|grey-pixel|1x1|amazon\.(png|jpg)/i.test(u);
 }
 
 // Amazon puts the main product image in data-a-dynamic-image (a JSON map of url->[w,h]).
