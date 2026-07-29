@@ -191,7 +191,7 @@ function readFileUrl(prop) {
  * Returns { image: string, price: number|null } — empty/null if not found.
  */
 async function fetchMeta(url) {
-  const out = { image: "", price: null };
+  const empty = { image: "", price: null };
   let html;
   try {
     const res = await fetch(url, {
@@ -210,20 +210,33 @@ async function fetchMeta(url) {
       redirect: "follow",
       cf: { cacheTtl: 300 },
     });
-    if (!res.ok) return out;
+    if (!res.ok) return empty;
     html = await res.text();
   } catch {
-    return out;
+    return empty;
   }
 
+  return parseProductMeta(html, url);
+}
+
+/**
+ * Parse product metadata separately from fetching so site-specific markup can
+ * be covered by tests. Coupang may expose the selected option only in its
+ * embedded page state rather than in standard meta tags.
+ */
+export function parseProductMeta(html, url) {
+  const out = { image: "", price: null };
   const ld = parseJsonLd(html);
   const product = findNodeByType(ld, "Product");
+  const coupang = isCoupangUrl(url) ? parseCoupangState(html) : null;
 
-  // Image: Product image (JSON-LD) → Open Graph → Amazon markup → any JSON-LD image.
+  // Image: Product image (JSON-LD) → Open Graph → site-specific state/markup.
   // Skip Amazon placeholder/logo images that appear on bot-blocked pages.
   const candidates = [
     pickImage(product?.image),
     metaContent(html, ["og:image:secure_url", "og:image", "twitter:image", "twitter:image:src"]),
+    coupang?.image,
+    coupangImage(html),
     amazonImage(html),
     pickImage(findInLd(ld, "image")),
   ];
@@ -240,6 +253,8 @@ async function fetchMeta(url) {
   const priceRaw =
     metaContent(html, ["product:price:amount", "og:price:amount"]) ||
     (product ? findRaw(product.offers ?? product, "price", 0) : null) ||
+    coupang?.price ||
+    coupangPrice(html) ||
     findInLd(ld, "price") ||
     itempropPrice(html) ||
     amazonPrice(html);
@@ -252,7 +267,180 @@ async function fetchMeta(url) {
 // Reject Amazon site chrome / placeholder images. Real product photos live under
 // /images/I/; logos, share icons, and sprites live under /images/G/ etc.
 function isJunkImage(u) {
-  return /share-icons|previewdoh|\/images\/G\/|sprite|transparent|grey-pixel|1x1|amazon\.(png|jpg)/i.test(u);
+  return /share-icons|previewdoh|\/images\/G\/|sprite|transparent|grey-pixel|1x1|amazon\.(png|jpg)|\/www\/error\/|logo-coupang/i.test(u);
+}
+
+function isCoupangUrl(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === "coupang.com" || host.endsWith(".coupang.com");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Coupang embeds the selected product option in exports.sdp or one of its
+ * application bootstrap objects. These fields are more reliable than display
+ * text and preserve prices such as "79,000" as KRW 79000.
+ */
+function parseCoupangState(html) {
+  const states = extractEmbeddedJson(html, [
+    "exports.sdp",
+    "window.__INITIAL_STATE__",
+    "window.__INITIAL_STATE",
+    "window.__NEXT_DATA__",
+  ]);
+
+  const nextData = html.match(
+    /<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i
+  );
+  if (nextData) {
+    try {
+      states.push(JSON.parse(nextData[1].trim()));
+    } catch {
+      // Ignore malformed bootstrap state and continue with markup fallbacks.
+    }
+  }
+
+  const priceKeys = ["salePrice", "finalPrice", "sellingPrice", "currentPrice", "discountPrice"];
+  const imageKeys = [
+    "imageUrl",
+    "imageURL",
+    "thumbnailUrl",
+    "thumbnail",
+    "productImage",
+    "detailImage",
+    "image",
+  ];
+
+  return {
+    price: findFirstKey(states, priceKeys, isPriceValue),
+    image: pickImage(findFirstKey(states, imageKeys, isImageValue)),
+  };
+}
+
+function extractEmbeddedJson(html, markers) {
+  const out = [];
+  for (const marker of markers) {
+    let from = 0;
+    while (from < html.length) {
+      const markerAt = html.indexOf(marker, from);
+      if (markerAt < 0) break;
+      const start = findJsonStart(html, markerAt + marker.length);
+      if (start < 0) break;
+      const raw = readBalancedJson(html, start);
+      if (raw) {
+        try {
+          out.push(JSON.parse(raw));
+        } catch {
+          // Ignore JavaScript object literals that are not valid JSON.
+        }
+      }
+      from = start + Math.max(raw.length, 1);
+    }
+  }
+  return out;
+}
+
+function findJsonStart(text, from) {
+  for (let i = from; i < Math.min(text.length, from + 200); i++) {
+    if (text[i] === "{" || text[i] === "[") return i;
+    if (text[i] === ";" || text[i] === "<") return -1;
+  }
+  return -1;
+}
+
+function readBalancedJson(text, start) {
+  const pairs = { "{": "}", "[": "]" };
+  const stack = [];
+  let quote = "";
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === quote) quote = "";
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (pairs[ch]) stack.push(pairs[ch]);
+    else if (ch === stack[stack.length - 1]) {
+      stack.pop();
+      if (!stack.length) return text.slice(start, i + 1);
+    }
+  }
+  return "";
+}
+
+function findFirstKey(nodes, keys, accept) {
+  for (const key of keys) {
+    for (const node of nodes) {
+      const value = findAcceptedValue(node, key, accept, 0);
+      if (value != null) return value;
+    }
+  }
+  return null;
+}
+
+function findAcceptedValue(node, key, accept, depth) {
+  if (node == null || depth > 12) return null;
+  if (Array.isArray(node)) {
+    for (const value of node) {
+      const found = findAcceptedValue(value, key, accept, depth + 1);
+      if (found != null) return found;
+    }
+    return null;
+  }
+  if (typeof node !== "object") return null;
+  if (node[key] != null && accept(node[key])) return node[key];
+  for (const value of Object.values(node)) {
+    const found = findAcceptedValue(value, key, accept, depth + 1);
+    if (found != null) return found;
+  }
+  return null;
+}
+
+function isPriceValue(value) {
+  return toPrice(value) != null;
+}
+
+function isImageValue(value) {
+  const image = pickImage(value);
+  return /^https?:\/\/[^"' ]+\.(?:avif|gif|jpe?g|png|webp)(?:[?#]|$)/i.test(image);
+}
+
+function coupangImage(html) {
+  const m =
+    html.match(
+      /class=["'][^"']*prod-image__detail[^"']*["'][^>]*(?:src|data-src)=["']([^"']+)["']/i
+    ) ||
+    html.match(
+      /(?:src|data-src)=["']([^"']+)["'][^>]*class=["'][^"']*prod-image__detail[^"']*["']/i
+    );
+  return m ? decodeHtml(m[1]) : "";
+}
+
+function coupangPrice(html) {
+  const m =
+    html.match(
+      /class=["'][^"']*(?:total-price|prod-sale-price|price-value)[^"']*["'][^>]*>[\s\S]{0,300}?([0-9][0-9,]*)\s*원/i
+    ) ||
+    html.match(
+      /(?:salePrice|finalPrice|sellingPrice|currentPrice)["']?\s*:\s*["']?([0-9][0-9,]*)/i
+    );
+  return m ? m[1] : "";
+}
+
+function decodeHtml(value) {
+  return value
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'");
 }
 
 // Amazon puts the main product image in data-a-dynamic-image (a JSON map of url->[w,h]).

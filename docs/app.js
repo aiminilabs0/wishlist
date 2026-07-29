@@ -112,7 +112,7 @@ function renderCard(item) {
   if (item.price != null) {
     const price = document.createElement("span");
     price.className = "price";
-    price.textContent = formatPrice(item.price);
+    price.textContent = formatPrice(item.price, item.url);
     titleRow.appendChild(price);
   }
   body.appendChild(titleRow);
@@ -225,14 +225,25 @@ async function onRemove(item, btn) {
   }
 }
 
-function formatPrice(n) {
+function formatPrice(n, url) {
+  const currency = isCoupangUrl(url) ? "KRW" : "USD";
   try {
     return new Intl.NumberFormat(undefined, {
       style: "currency",
-      currency: "USD",
+      currency,
+      maximumFractionDigits: currency === "KRW" ? 0 : 2,
     }).format(n);
   } catch {
-    return "$" + n;
+    return currency === "KRW" ? `₩${n}` : `$${n}`;
+  }
+}
+
+function isCoupangUrl(value) {
+  try {
+    const host = new URL(value).hostname.toLowerCase();
+    return host === "coupang.com" || host.endsWith(".coupang.com");
+  } catch {
+    return false;
   }
 }
 
