@@ -50,6 +50,7 @@ export default {
         requireKey(request, env);
         const target = url.searchParams.get("url");
         if (!target) throw httpError("url query param required", 400);
+        if (url.searchParams.get("debug")) return json(await debugFetch(target));
         return json(await fetchMeta(target));
       }
       if (pathname === "/items" && request.method === "GET") {
@@ -118,9 +119,10 @@ async function createItem(request, env) {
   }
   if (price != null) extra[PROP.price] = { number: price };
 
-  // Try with the scraped fields; if the DB lacks those columns, retry without.
+  // Try with the scraped fields; if the Image/Price columns are missing or the
+  // wrong type, retry with just the core fields so the item still saves.
   let { res, data } = await createPage(env, { ...core, ...extra });
-  if (!res.ok && Object.keys(extra).length && isMissingPropertyError(data)) {
+  if (!res.ok && Object.keys(extra).length && isPropertyError(data)) {
     ({ res, data } = await createPage(env, core));
   }
   if (!res.ok) throw httpError(data.message || "Notion create failed", res.status);
@@ -140,9 +142,11 @@ async function createPage(env, properties) {
   return { res, data };
 }
 
-// Notion returns a 400 like "X is not a property that exists" if a column is missing.
-function isMissingPropertyError(data) {
-  return /is not a property that exists/i.test(data?.message || "");
+// Notion 400s if a column is missing ("X is not a property that exists") or is
+// the wrong type ("Price is expected to be rich_text.").
+function isPropertyError(data) {
+  const m = data?.message || "";
+  return /is not a property that exists/i.test(m) || /is expected to be/i.test(m);
 }
 
 async function archiveItem(pageId, env) {
@@ -303,6 +307,39 @@ function searchType(node, type, depth) {
     if (r) return r;
   }
   return null;
+}
+
+// Diagnostic: fetch a URL and report what the Worker actually received.
+async function debugFetch(url) {
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+      Accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
+    },
+    redirect: "follow",
+  });
+  const html = await res.text();
+  const types = [...html.matchAll(/"@type"\s*:\s*"([^"]+)"/g)].map((m) => m[1]);
+  const priceHits = [
+    ...html.matchAll(
+      /("currentPrice"\s*:\s*[0-9.]+|"customerPrice"\s*:\s*[0-9.]+|"regularPrice"\s*:\s*[0-9.]+|itemprop=["']price["'][^>]*content=["'][0-9.]+["'])/gi
+    ),
+  ].map((m) => m[0]);
+  return {
+    status: res.status,
+    bytes: html.length,
+    title: (html.match(/<title>([^<]*)<\/title>/i) || [])[1] || "",
+    ogImage: metaContent(html, ["og:image:secure_url", "og:image"]),
+    jsonLdTypes: [...new Set(types)].slice(0, 20),
+    priceHits: priceHits.slice(0, 5),
+    looksBlocked: /access denied|are you a robot|captcha|unusual traffic|akamai|reference #/i.test(
+      html.slice(0, 4000)
+    ),
+    head: html.slice(0, 600),
+  };
 }
 
 function metaContent(html, names) {
